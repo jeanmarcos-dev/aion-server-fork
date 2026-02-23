@@ -64,25 +64,26 @@ public class SpawnEngine {
 	 * Create non-permanent spawn template with no respawn
 	 */
 	public static SpawnTemplate newSingleTimeSpawn(int worldId, int npcId, float x, float y, float z, byte heading) {
-		return newSpawn(worldId, npcId, x, y, z, heading, 0, 0, null);
+		return newSpawn(worldId, npcId, x, y, z, heading, 0, 0, null, null);
+	}
+
+	public static SpawnTemplate newSingleTimeSpawn(int worldId, int npcId, float x, float y, float z, byte heading, VisibleObject creator, String aiName) {
+		int creatorId = creator == null ? 0 : creator.getObjectId();
+		EventTemplate eventTemplate = creator == null || creator.getSpawn() == null ? null : creator.getSpawn().getEventTemplate();
+		return newSpawn(worldId, npcId, x, y, z, heading, 0, creatorId, aiName, eventTemplate);
 	}
 
 	public static SpawnTemplate newSingleTimeSpawn(int worldId, int npcId, float x, float y, float z, byte heading, int creatorId) {
-		return newSpawn(worldId, npcId, x, y, z, heading, 0, creatorId, null);
-	}
-
-	public static SpawnTemplate newSingleTimeSpawn(int worldId, int npcId, float x, float y, float z, byte heading, int creatorId,
-		String aiName) {
-		return newSpawn(worldId, npcId, x, y, z, heading, 0, creatorId, aiName);
+		return newSpawn(worldId, npcId, x, y, z, heading, 0, creatorId, null, null);
 	}
 
 	public static SpawnTemplate newSpawn(int worldId, int npcId, float x, float y, float z, byte heading, int respawnTime) {
-		return newSpawn(worldId, npcId, x, y, z, heading, respawnTime, 0, null);
+		return newSpawn(worldId, npcId, x, y, z, heading, respawnTime, 0, null, null);
 	}
 
 	private static SpawnTemplate newSpawn(int worldId, int npcId, float x, float y, float z, byte heading, int respawnTime, int creatorId,
-		String aiName) {
-		return new SpawnTemplate(new SpawnGroup(worldId, npcId, respawnTime), x, y, z, heading, 0, null, 0, creatorId, aiName);
+			String aiName, EventTemplate eventTemplate) {
+		return new SpawnTemplate(new SpawnGroup(worldId, npcId, respawnTime, eventTemplate), x, y, z, heading, 0, null, 0, creatorId, aiName);
 	}
 
 	/**
@@ -90,7 +91,7 @@ public class SpawnEngine {
 	 */
 	public static SiegeSpawnTemplate newSiegeSpawn(int worldId, int npcId, int siegeId, SiegeRace race, SiegeModType mod, float x, float y, float z,
 		byte heading) {
-		return new SiegeSpawnTemplate(siegeId, race, mod, new SpawnGroup(worldId, npcId, 0), x, y, z, heading, 0, null, 0);
+		return new SiegeSpawnTemplate(siegeId, race, mod, new SpawnGroup(worldId, npcId, 0, null), x, y, z, heading, 0, null, 0);
 	}
 
 	static void bringIntoWorld(VisibleObject visibleObject, SpawnTemplate spawn, int instanceIndex) {
@@ -121,7 +122,6 @@ public class SpawnEngine {
 			if (!worldMap.isInstanceType())
 				worldMap.forEach(instance -> spawnInstance(instance, (byte) 0, instance.getOwnerId()));
 		});
-		DataManager.SPAWNS_DATA.clearTemplates();
 		printWorldSpawnStats();
 	}
 

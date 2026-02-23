@@ -2,14 +2,13 @@ package com.aionemu.gameserver.ai;
 
 import java.util.Arrays;
 import java.util.Objects;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 import com.aionemu.commons.utils.Rnd;
 import com.aionemu.gameserver.ai.event.AIEventLog;
 import com.aionemu.gameserver.ai.event.AIEventType;
 import com.aionemu.gameserver.ai.handler.FreezeEventHandler;
 import com.aionemu.gameserver.configs.main.AIConfig;
+import com.aionemu.gameserver.controllers.attack.AggroTarget;
 import com.aionemu.gameserver.geoEngine.math.Vector3f;
 import com.aionemu.gameserver.model.animations.AttackHandAnimation;
 import com.aionemu.gameserver.model.animations.AttackTypeAnimation;
@@ -33,7 +32,7 @@ public abstract class AbstractAI<T extends Creature> implements AI {
 	private final T owner;
 	private AIState currentState;
 	private AISubState currentSubState;
-	private final Lock thinkLock = new ReentrantLock();
+	private boolean thinking;
 
 	private boolean logging = false;
 
@@ -132,9 +131,10 @@ public abstract class AbstractAI<T extends Creature> implements AI {
 			}
 			try {
 				handleCreatureEvent(event, creature);
-			} catch (StackOverflowError e) {
+			} catch (StackOverflowError | BootstrapMethodError e) {
+				Creature mostHated = getOwner().getAggroList().getTarget(AggroTarget.MOST_HATED);
 				StackOverflowError error = new StackOverflowError(
-					"Aborted never ending AI event loop for " + getOwner() + " with AIEventType." + event + " and target: " + creature);
+					"Aborted never ending AI event loop for " + getOwner() + " with AIEventType." + event + " and target: " + creature + ", most hated: " + mostHated);
 				error.setStackTrace(Arrays.copyOfRange(e.getStackTrace(), Math.max(e.getStackTrace().length - 42, 0), e.getStackTrace().length));
 				throw error;
 			}
@@ -174,12 +174,14 @@ public abstract class AbstractAI<T extends Creature> implements AI {
 		return owner.isDead();
 	}
 
-	public final boolean tryLockThink() {
-		return thinkLock.tryLock();
+	public synchronized final boolean setThinking() {
+		if (thinking)
+			return false;
+		return thinking = true;
 	}
 
-	public final void unlockThink() {
-		thinkLock.unlock();
+	public synchronized final void unsetThinking() {
+		thinking = false;
 	}
 
 	@Override
@@ -392,7 +394,11 @@ public abstract class AbstractAI<T extends Creature> implements AI {
 	 * Spawn object with staticId in the same world and instance as AI's owner
 	 */
 	protected final VisibleObject spawn(int npcId, float x, float y, float z, byte heading, int staticId) {
-		SpawnTemplate template = SpawnEngine.newSingleTimeSpawn(owner.getWorldId(), npcId, x, y, z, heading, owner.getObjectId());
+		return spawn(npcId, x, y, z, heading, staticId, null);
+	}
+
+	protected final VisibleObject spawn(int npcId, float x, float y, float z, byte heading, int staticId, String aiName) {
+		SpawnTemplate template = SpawnEngine.newSingleTimeSpawn(owner.getWorldId(), npcId, x, y, z, heading, owner, aiName);
 		template.setStaticId(staticId);
 		return SpawnEngine.spawnObject(template, owner.getInstanceId());
 	}

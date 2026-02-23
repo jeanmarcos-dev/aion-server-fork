@@ -25,6 +25,8 @@ import com.aionemu.gameserver.model.stats.container.StatEnum;
 import com.aionemu.gameserver.model.templates.item.WeaponStats;
 import com.aionemu.gameserver.model.templates.item.enums.ItemSubType;
 import com.aionemu.gameserver.model.templates.npc.NpcRating;
+import com.aionemu.gameserver.skillengine.effect.EffectTemplate;
+import com.aionemu.gameserver.skillengine.effect.NoReduceSpellATKInstantEffect;
 import com.aionemu.gameserver.skillengine.model.HitType;
 import com.aionemu.gameserver.world.WorldMapInstance;
 
@@ -104,7 +106,7 @@ public class StatFunctions {
 		// http://www.aionsource.com/forum/mechanic-analysis/42597-character-stats-xp-dp-origin-gerbator-team-july-2009-a.html
 		int baseDP = targetLevel * calculateRatingMultiplier(npcRating);
 		int xpPercentage = XPRewardEnum.xpRewardFrom(targetLevel - playerLevel);
-		return (int) Rates.DP_PVE.calcResult(player, (int) Math.floor(baseDP * xpPercentage / 100f));
+		return Rates.DP_PVE.calcResult(player, (int) Math.floor(baseDP * xpPercentage / 100f));
 	}
 
 	/**
@@ -120,7 +122,7 @@ public class StatFunctions {
 		if (target.getName().equals("flame hoverstone"))
 			apNpcRate = 0.5f;
 
-		return (int) Rates.AP_PVE.calcResult(player, (int) Math.floor(15 * apNpcRate));
+		return Rates.AP_PVE.calcResult(player, (int) Math.floor(15 * apNpcRate));
 	}
 
 	/**
@@ -139,7 +141,7 @@ public class StatFunctions {
 		else if (difference == 3)
 			pointsLost = Math.round(pointsLost * 0.85f);
 
-		return (int) Rates.AP_PVP_LOST.calcResult(defeated, pointsLost);
+		return Rates.AP_PVP_LOST.calcResult(defeated, pointsLost);
 	}
 
 	/**
@@ -334,39 +336,51 @@ public class StatFunctions {
 	}
 
 	/**
-	 * elemental resistance, 145 = 10% magical damage reduction (cap at +-1150)
+	 * Applies elemental resistance to incoming damage.
+	 *
+	 * Elemental resistance scales damage reduction linearly:
+	 * <ul>
+	 *   <li>For players:   1450 elemental resist = 100% reduction</li>
+	 *   <li>For NPCs/others: 1300 elemental resist = 100% reduction</li>
+	 * </ul>
+	 *
+	 * Example: 145 elemental resist reduces magical damage by 10% for players.
+	 *
+	 * @param attacked target receiving damage
+	 * @param element damage element
+	 * @param damage base damage before elemental resistance
 	 * @return damage reduced by elemental resistance
 	 */
 	private static float reduceDamageByElementalResistance(Creature attacked, SkillElement element, float damage) {
-		return damage * (1 - adjustStatByMovementModifier(attacked, StatEnum.MAGICAL_DEFEND, attacked.getGameStats().getMagicalDefenseFor(element))/ 1450f);
+		float elementalDenominator = attacked instanceof Player ? 1450 : 1300;
+		return damage * (1 - adjustStatByMovementModifier(attacked, element.getStatForElement(), attacked.getGameStats().getMagicalDefenseFor(element)) / elementalDenominator);
 	}
 
-
-	public static float calculateMagicalSkillDamage(Creature speller, Creature target, float baseDamage, int bonus, SkillElement element,
+	public static float calculateMagicalSkillDamage(Creature effector, Creature target, float baseDamage, int bonus, EffectTemplate template,
 													boolean useMagicBoost, boolean useKnowledge) {
-		CreatureGameStats<?> sgs = speller.getGameStats();
-		CreatureGameStats<?> tgs = target.getGameStats();
+		float damage = baseDamage;
+		if (!(template instanceof NoReduceSpellATKInstantEffect)) {
+			CreatureGameStats<?> sgs = effector.getGameStats();
+			CreatureGameStats<?> tgs = target.getGameStats();
+			float magicBoost = useMagicBoost ? sgs.getMBoost().getCurrent() : 0;
+			magicBoost -= effector instanceof Trap ? 0 : tgs.getMBResist().getCurrent();
+			magicBoost = (int) Math.max(0, limit(StatEnum.BOOST_MAGICAL_SKILL, magicBoost));
+			float knowledge = useKnowledge ? sgs.getKnowledge().getCurrent() : 100; // this line might be wrong now
+			damage *= (1 + (magicBoost / (knowledge * 10)));
+			damage = sgs.getStat(StatEnum.BOOST_SPELL_ATTACK, (int) damage).getCurrent();
+		}
 
-		float magicBoost = useMagicBoost ? sgs.getMBoost().getCurrent() : 0;
-		magicBoost -= speller instanceof Trap ? 0 : tgs.getMBResist().getCurrent();
-
-		magicBoost = (int) Math.max(0, limit(StatEnum.BOOST_MAGICAL_SKILL, magicBoost));
-		float knowledge = useKnowledge ? sgs.getKnowledge().getCurrent() : 100; // this line might be wrong now
-		float damage = baseDamage * (1 + (magicBoost / (knowledge * 10)));
-
-
-		damage = sgs.getStat(StatEnum.BOOST_SPELL_ATTACK, (int) damage).getCurrent();
 		// add bonus damage
 		damage += bonus;
-		if (element != SkillElement.NONE) {
-			damage = reduceDamageByElementalResistance(target, element, damage);
+		if (template.getElement() != SkillElement.NONE && !(template instanceof NoReduceSpellATKInstantEffect)) {
+			damage = reduceDamageByElementalResistance(target, template.getElement(), damage);
 			// damage is reduced by 100 per 1000 mdef
-			damage -= target.getGameStats().getMDef().getCurrent()/10f;
+			damage -= adjustStatByMovementModifier(target, StatEnum.MAGICAL_DEFEND, target.getGameStats().getMDef().getCurrent()) / 10f;
 		}
 
 		if (damage < 0) {
 			damage = 0;
-		} else if (speller instanceof Npc && !(speller instanceof SummonedObject<?>)) {
+		} else if (effector instanceof Npc && !(effector instanceof SummonedObject<?>)) {
 			int rnd = (int) (damage * 0.08f);
 			damage += Rnd.get(-rnd, rnd);
 		}
@@ -599,9 +613,10 @@ public class StatFunctions {
 					case PHYSICAL_ATTACK:
 					case MAGICAL_ATTACK:
 						return value * 1.1f; // verified on 4.6 PTS
-					case MAGICAL_DEFEND:
-					case PHYSICAL_DEFENSE:
-						return value * 0.8f;
+					case FIRE_RESISTANCE, EARTH_RESISTANCE, WATER_RESISTANCE, WIND_RESISTANCE, LIGHT_RESISTANCE, DARK_RESISTANCE:
+						return value - 50; // verified on 4.6 PTS
+					case MAGICAL_DEFEND, PHYSICAL_DEFENSE:
+						return value * 0.8f; // verified on 4.6 PTS
 				}
 				break;
 			case SIDEWAYS:

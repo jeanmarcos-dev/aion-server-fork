@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import com.aionemu.commons.utils.Rnd;
 import com.aionemu.gameserver.ai.poll.AIQuestion;
 import com.aionemu.gameserver.controllers.attack.AttackResult;
+import com.aionemu.gameserver.controllers.effect.CumulativeResistType;
 import com.aionemu.gameserver.dataholders.DataManager;
 import com.aionemu.gameserver.model.SkillElement;
 import com.aionemu.gameserver.model.gameobjects.Creature;
@@ -260,6 +261,10 @@ public abstract class EffectTemplate {
 		return value + delta * effect.getSkillLevel();
 	}
 
+	public int calculateCritAddDmg(Effect effect) {
+		return critAddDmg2 + critAddDmg1 * effect.getSkillLevel();
+	}
+
 	/**
 	 * Calculate effect result
 	 *
@@ -502,26 +507,6 @@ public abstract class EffectTemplate {
 		if (isProtectedByShield(effected, statEnum))
 			return false;
 
-		// calculate cumulative resist chance for fear, sleep and paralyze if effector and effected are players
-		if (effector.getMaster() instanceof Player && effected instanceof Player) {
-			if (statEnum == StatEnum.FEAR_RESISTANCE && ((Player) effected).getFearCount() >= 3
-				&& ((Player) effected).validateCumulativeFearResistExpirationTime()) {
-				if (Rnd.get(1, 1000) <= getCumulativeResistChanceFor(((Player) effected).getFearCount())) {
-					return false;
-				}
-			} else if (statEnum == StatEnum.SLEEP_RESISTANCE && ((Player) effected).getSleepCount() >= 3
-				&& ((Player) effected).validateCumulativeSleepResistExpirationTime()) {
-				if (Rnd.get(1, 1000) <= getCumulativeResistChanceFor(((Player) effected).getSleepCount())) {
-					return false;
-				}
-			} else if (statEnum == StatEnum.PARALYZE_RESISTANCE && ((Player) effected).getParalyzeCount() >= 3
-				&& ((Player) effected).validateCumulativeParalyzeResistExpirationTime()) {
-				if (Rnd.get(1, 1000) <= getCumulativeResistChanceFor(((Player) effected).getParalyzeCount())) {
-					return false;
-				}
-			}
-		}
-
 		int effectPower = 1000;
 
 		if (isAlteredState(statEnum))
@@ -530,13 +515,17 @@ public abstract class EffectTemplate {
 		// effect resistance
 		effectPower -= effected.getGameStats().getResistance(statEnum).getCurrent();
 
+		// calculate cumulative resist chance for fear, sleep and paralyze if effector and effected are players
+		if (effector.getMaster() instanceof Player && effected instanceof Player player)
+			effectPower -= player.getEffectController().getCumulativeResistance(CumulativeResistType.get(statEnum));
+
 		// penetration
 		StatEnum penetrationStat = this.getPenetrationStat(statEnum);
 		if (penetrationStat != null)
 			effectPower += effector.getGameStats().getStat(penetrationStat, 0).getCurrent();
 
 		// resist mod
-		if (effector.isPvpTarget(effected)) { // pvp
+		if (effectPower > 0 && effector.isPvpTarget(effected)) { // pvp
 			int lvlDiff = effected.getLevel() - effector.getLevel();
 			if (lvlDiff > 4) {
 				float reductionRate = 0.1f * (lvlDiff - 4); // see https://forums.aiononline.com/topic/25-arena-of-discipline-entries/?page=2#elComment_2213
@@ -571,7 +560,7 @@ public abstract class EffectTemplate {
 
 	private boolean isProtectedByShield(Creature effected, StatEnum stat) {
 		return switch (stat) {
-			case PULLED_RESISTANCE, STUMBLE_RESISTANCE, OPENAERIAL_RESISTANCE, SPIN_RESISTANCE, STAGGER_RESISTANCE -> effected.getEffectController().isUnderNormalShield();
+			case STUMBLE_RESISTANCE, OPENAERIAL_RESISTANCE, SPIN_RESISTANCE, STAGGER_RESISTANCE -> effected.getEffectController().isUnderNormalShield();
 			default -> false;
 		};
 	}
@@ -584,14 +573,5 @@ public abstract class EffectTemplate {
 			LoggerFactory.getLogger(EffectTemplate.class).warn("Missing statenum penetration for " + statEnum.toString());
 		}
 		return toReturn;
-	}
-
-	private int getCumulativeResistChanceFor(int resistCount) {
-		return switch (resistCount) {
-			case 0, 1, 2 -> 0;
-			case 3 -> 200;
-			case 4 -> 400;
-			default -> 1000;
-		};
 	}
 }

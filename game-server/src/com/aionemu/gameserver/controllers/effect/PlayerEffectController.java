@@ -2,6 +2,8 @@ package com.aionemu.gameserver.controllers.effect;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumMap;
+import java.util.Map;
 
 import com.aionemu.gameserver.configs.main.CustomConfig;
 import com.aionemu.gameserver.dataholders.DataManager;
@@ -24,8 +26,15 @@ import com.aionemu.gameserver.utils.PacketSendUtility;
  */
 public class PlayerEffectController extends EffectController {
 
+	private final Map<CumulativeResistType, CumulativeResist> cumulativeResistInfo = new EnumMap<>(CumulativeResistType.class);
+	private boolean keepBuffsOnDie;
+
 	public PlayerEffectController(Creature owner) {
 		super(owner);
+	}
+
+	public void setKeepBuffsOnDie(boolean keepBuffsOnDie) {
+		this.keepBuffsOnDie = keepBuffsOnDie;
 	}
 
 	@Override
@@ -79,23 +88,14 @@ public class PlayerEffectController extends EffectController {
 	public void updatePlayerEffectIcons(Effect effect) {
 		int slot = effect != null ? effect.getTargetSlot().getId() : SkillTargetSlot.FULLSLOTS;
 		Collection<Effect> effects = getAbnormalEffectsToShow();
-		PacketSendUtility.sendPacket(getOwner(), new SM_ABNORMAL_STATE(effects, abnormals, slot));
+		PacketSendUtility.sendPacket(getOwner(), new SM_ABNORMAL_STATE(effects, getAbnormals(), slot));
 	}
 
 	/**
 	 * Effect of DEBUFF should not be added if duel ended (friendly unit)
-	 * 
-	 * @param effect
-	 * @return
 	 */
 	private boolean checkDuelCondition(Effect effect) {
-		Creature creature = effect.getEffector();
-		if (creature instanceof Player) {
-			if (!getOwner().isEnemy(creature) && effect.getTargetSlot() == SkillTargetSlot.DEBUFF) {
-				return true;
-			}
-		}
-		return false;
+		return effect.getTargetSlot() == SkillTargetSlot.DEBUFF && effect.getEffector() instanceof Player player && !getOwner().equals(player) && !getOwner().isEnemy(player);
 	}
 
 	public void addSavedEffect(int skillId, int skillLvl, int remainingTime, long endTime, ForceType forceType) {
@@ -114,16 +114,44 @@ public class PlayerEffectController extends EffectController {
 		}
 
 		Effect effect = new Effect(getOwner(), getOwner(), template, skillLvl, remainingTime, forceType);
-		lock.writeLock().lock();
-		try {
-			getMapForEffect(effect).put(effect.getStack(), effect);
-		} finally {
-			lock.writeLock().unlock();
-		}
+		put(effect);
 		effect.addAllEffectToSucess();
 		effect.startEffect();
 
 		if (effect.getSkillTemplate().getTargetSlot() != SkillTargetSlot.NOSHOW)
-			PacketSendUtility.sendPacket(getOwner(), new SM_ABNORMAL_STATE(Collections.singletonList(effect), abnormals, SkillTargetSlot.FULLSLOTS));
+			PacketSendUtility.sendPacket(getOwner(), new SM_ABNORMAL_STATE(Collections.singletonList(effect), getAbnormals(), SkillTargetSlot.FULLSLOTS));
+	}
+
+	@Override
+	public void removeAllEffects() {
+		super.removeAllEffects();
+		synchronized (cumulativeResistInfo) {
+			cumulativeResistInfo.clear();
+		}
+	}
+
+	@Override
+	protected boolean canRemoveOnDie(Effect effect) {
+		if (!super.canRemoveOnDie(effect))
+			return false;
+		if (keepBuffsOnDie)
+			return effect.getTargetSlot() == SkillTargetSlot.DEBUFF;
+		return true;
+	}
+
+	public long calculateAndApplyCumulativeResistDuration(CumulativeResistType type, long duration) {
+		synchronized (cumulativeResistInfo) {
+			CumulativeResist cumulativeResist = cumulativeResistInfo.computeIfAbsent(type, _ -> new CumulativeResist());
+			// retail uses a dynamic duration after the last successful fear/para/sleep, which we approximate by multiplying the base duration * 2 for now
+			cumulativeResist.tryIncrementLevel(duration * 2);
+			return (long) (duration * cumulativeResist.getDurationMultiplier());
+		}
+	}
+
+	public int getCumulativeResistance(CumulativeResistType type) {
+		synchronized (cumulativeResistInfo) {
+			CumulativeResist cumulativeResist = cumulativeResistInfo.get(type);
+			return cumulativeResist == null ? 0 : cumulativeResist.getResistance();
+		}
 	}
 }

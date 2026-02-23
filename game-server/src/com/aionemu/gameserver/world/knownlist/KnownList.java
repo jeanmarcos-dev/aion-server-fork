@@ -49,9 +49,10 @@ public class KnownList {
 	 * Removes all objects from this list and sends a despawn animation for the owner to all removed players.
 	 */
 	public synchronized void clear(ObjectDeleteAnimation animation) {
-		for (KnownObject object : knownObjects.values())
+		for (KnownObject object : knownObjects.values()) {
+			del(object.get(), ObjectDeleteAnimation.NONE);
 			object.get().getKnownList().del(owner, animation);
-		knownObjects.clear();
+		}
 	}
 
 	/**
@@ -179,9 +180,6 @@ public class KnownList {
 		}
 		for (MapRegion region : position.getMapRegion().getNeighbours()) {
 			for (VisibleObject newObject : region.getObjects().values()) {
-				if (newObject == null || owner.equals(newObject))
-					continue;
-
 				if (!isAwareOf(newObject))
 					continue;
 
@@ -201,7 +199,7 @@ public class KnownList {
 	 * @return True if the knownlist owner is aware of newObject (should be kept in knownlist)
 	 */
 	protected boolean isAwareOf(VisibleObject newObject) {
-		return true;
+		return newObject != null && !newObject.equals(owner);
 	}
 
 	/**

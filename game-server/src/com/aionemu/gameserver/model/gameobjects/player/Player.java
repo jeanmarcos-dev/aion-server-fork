@@ -6,8 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import com.aionemu.gameserver.configs.administration.AdminConfig;
 import com.aionemu.gameserver.configs.main.SecurityConfig;
@@ -56,6 +54,7 @@ import com.aionemu.gameserver.model.team.legion.LegionMember;
 import com.aionemu.gameserver.model.templates.flypath.FlyPathEntry;
 import com.aionemu.gameserver.model.templates.item.ItemAttackType;
 import com.aionemu.gameserver.model.templates.item.ItemUseLimits;
+import com.aionemu.gameserver.model.templates.npc.NpcTemplateType;
 import com.aionemu.gameserver.model.templates.ride.RideInfo;
 import com.aionemu.gameserver.model.templates.windstreams.WindstreamPath;
 import com.aionemu.gameserver.model.templates.zone.ZoneType;
@@ -193,13 +192,6 @@ public class Player extends Creature {
 	private boolean isInFfaTeamMode;
 	private int customStates;
 	private PanesterraFaction panesterraFaction;
-
-	private final AtomicInteger fearCount = new AtomicInteger();
-	private final AtomicInteger sleepCount = new AtomicInteger();
-	private final AtomicInteger paralyzeCount = new AtomicInteger();
-	private final AtomicLong cumulativeFearResistExpirationTime = new AtomicLong();
-	private final AtomicLong cumulativeSleepResistExpirationTime = new AtomicLong();
-	private final AtomicLong cumulativeParalyzeResistExpirationTime = new AtomicLong();
 
 	public Player(PlayerAccountData playerAccountData, Account account) {
 		super(playerAccountData.getPlayerCommonData().getPlayerObjId(), new PlayerController(), null, playerAccountData.getPlayerCommonData(),
@@ -985,19 +977,20 @@ public class Player extends Creature {
 		return getTribe();
 	}
 
-	/**
-	 * @return the summon
-	 */
 	public Summon getSummon() {
 		return summon;
 	}
 
-	/**
-	 * @param summon
-	 *          the summon to set
-	 */
 	public void setSummon(Summon summon) {
 		this.summon = summon;
+	}
+
+	public Creature getSummonOrMercenary(int objectId) {
+		if (summon != null && summon.getObjectId() == objectId)
+			return summon;
+		if (getKnownList().getObject(objectId) instanceof Npc npc && npc.getCreatorId() == getObjectId() && npc.getNpcTemplateType() == NpcTemplateType.MERCENARY)
+			return npc;
+		return null;
 	}
 
 	/**
@@ -1659,75 +1652,6 @@ public class Player extends Creature {
 
 	public boolean isInCustomState(CustomPlayerState state) {
 		return (customStates & state.getMask()) == state.getMask();
-	}
-
-	public void incrementFearCountAndUpdateExpirationTime(long duration) {
-		fearCount.incrementAndGet();
-		// +1s to compensate for hittime and differences between retail
-		cumulativeFearResistExpirationTime.set(System.currentTimeMillis() + duration + 1000);
-	}
-
-	public void incrementSleepCountAndUpdateExpirationTime(long duration) {
-		sleepCount.incrementAndGet();
-		// +1s to compensate for hittime and differences between retail
-		cumulativeSleepResistExpirationTime.set(System.currentTimeMillis() + duration + 1000);
-	}
-
-	public void incrementParalyzeCountAndUpdateExpirationTime(long duration) {
-		paralyzeCount.incrementAndGet();
-		// +1s to compensate for hittime and differences between retail
-		cumulativeParalyzeResistExpirationTime.set(System.currentTimeMillis() + duration + 1000);
-	}
-
-	public int getFearCount() {
-		return fearCount.get();
-	}
-
-	public int getSleepCount() {
-		return sleepCount.get();
-	}
-
-	public int getParalyzeCount() {
-		return paralyzeCount.get();
-	}
-
-	public void resetFearCount() {
-		fearCount.set(0);
-		cumulativeFearResistExpirationTime.set(0);
-	}
-
-	public void resetSleepCount() {
-		sleepCount.set(0);
-		cumulativeSleepResistExpirationTime.set(0);
-	}
-
-	public void resetParalyzeCount() {
-		paralyzeCount.set(0);
-		cumulativeParalyzeResistExpirationTime.set(0);
-	}
-
-	public boolean validateCumulativeFearResistExpirationTime() {
-		if (System.currentTimeMillis() > cumulativeFearResistExpirationTime.get()) {
-			resetFearCount();
-			return false;
-		}
-		return true;
-	}
-
-	public boolean validateCumulativeSleepResistExpirationTime() {
-		if (System.currentTimeMillis() > cumulativeSleepResistExpirationTime.get()) {
-			resetSleepCount();
-			return false;
-		}
-		return true;
-	}
-
-	public boolean validateCumulativeParalyzeResistExpirationTime() {
-		if (System.currentTimeMillis() > cumulativeParalyzeResistExpirationTime.get()) {
-			resetParalyzeCount();
-			return false;
-		}
-		return true;
 	}
 
 	public PanesterraFaction getPanesterraFaction() {

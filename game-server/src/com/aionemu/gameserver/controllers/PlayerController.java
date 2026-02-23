@@ -130,6 +130,8 @@ public class PlayerController extends CreatureController<Player> {
 	@Override
 	public void notSee(VisibleObject object, ObjectDeleteAnimation animation) {
 		super.notSee(object, animation);
+		if (!getOwner().isSpawned()) // player is teleporting, no need to send deletion packets
+			return;
 		if (object instanceof Pet) {
 			PacketSendUtility.sendPacket(getOwner(), new SM_PET(object.getObjectId(), animation));
 		} else if (object instanceof House) {
@@ -147,7 +149,7 @@ public class PlayerController extends CreatureController<Player> {
 	public void onTargetChanged(VisibleObject oldTarget, VisibleObject newTarget) {
 		super.onTargetChanged(oldTarget, newTarget);
 		PacketSendUtility.sendPacket(getOwner(), new SM_TARGET_SELECTED(newTarget));
-		PacketSendUtility.broadcastPacket(getOwner(), new SM_TARGET_UPDATE(getOwner()));
+		PacketSendUtility.broadcastToSightedPlayers(getOwner(), new SM_TARGET_UPDATE(getOwner()));
 	}
 
 	@Override
@@ -303,10 +305,6 @@ public class PlayerController extends CreatureController<Player> {
 		player.unsetState(CreatureState.GLIDING);
 		player.unsetFlyState(FlyState.FLYING);
 		player.unsetFlyState(FlyState.GLIDING);
-
-		player.resetFearCount();
-		player.resetSleepCount();
-		player.resetParalyzeCount();
 
 		// Effects removed with super.onDie()
 		super.onDie(lastAttacker);
@@ -487,7 +485,7 @@ public class PlayerController extends CreatureController<Player> {
 	public void onMove() {
 		super.onMove();
 		if (getOwner().isInTeam())
-			TeamMoveUpdater.getInstance().startTask(getOwner());
+			TeamMoveUpdater.getInstance().add(getOwner());
 	}
 
 	@Override
@@ -599,8 +597,8 @@ public class PlayerController extends CreatureController<Player> {
 		player.getLifeStats().synchronizeWithMaxStats();
 		player.getGameStats().updateStatsVisually();
 
-		if (player.isInTeam() && !TeamStatUpdater.getInstance().hasTask(player)) // SM_GROUP_MEMBER_INFO / SM_ALLIANCE_MEMBER_INFO task
-			TeamStatUpdater.getInstance().startTask(player);
+		if (player.isInTeam()) // SM_GROUP_MEMBER_INFO / SM_ALLIANCE_MEMBER_INFO task
+			TeamStatUpdater.getInstance().add(player);
 
 		if (player.isLegionMember()) // SM_LEGION_UPDATE_MEMBER
 			LegionService.getInstance().updateMemberInfo(player);

@@ -1,7 +1,9 @@
 package com.aionemu.gameserver.model.gameobjects;
 
+import java.util.LinkedList;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Queue;
+import java.util.function.Predicate;
 
 import com.aionemu.gameserver.controllers.NpcController;
 import com.aionemu.gameserver.controllers.movement.NpcMoveController;
@@ -27,10 +29,10 @@ import com.aionemu.gameserver.network.aion.serverpackets.SM_CUSTOM_SETTINGS;
 import com.aionemu.gameserver.services.TribeRelationService;
 import com.aionemu.gameserver.skillengine.effect.SummonOwner;
 import com.aionemu.gameserver.spawnengine.WalkerGroup;
-import com.aionemu.gameserver.spawnengine.WalkerGroupShift;
 import com.aionemu.gameserver.utils.PacketSendUtility;
 import com.aionemu.gameserver.utils.PositionUtil;
 import com.aionemu.gameserver.utils.idfactory.IDFactory;
+import com.aionemu.gameserver.world.World;
 import com.aionemu.gameserver.world.WorldPosition;
 
 /**
@@ -40,24 +42,21 @@ import com.aionemu.gameserver.world.WorldPosition;
  */
 public class Npc extends Creature {
 
+	private final NpcSkillList skillList;
+	private final Queue<NpcSkillEntry> queuedSkills = new LinkedList<>();
 	private WalkerGroup walkerGroup;
-	private NpcSkillList skillList;
-	private ConcurrentLinkedQueue<NpcSkillEntry> queuedSkills;
-	private WalkerGroupShift walkerGroupShift;
 	private String masterName;
 	private int creatorId = 0;
-	private int townId;
 	private CreatureType type = null;
 	private NpcEquippedGear overridenEquipment;
 	private SummonOwner summonOwner = null;
 
 	public Npc(NpcController controller, SpawnTemplate spawnTemplate, NpcTemplate objectTemplate) {
+		Objects.requireNonNull(objectTemplate);
 		super(IDFactory.getInstance().nextId(), controller, spawnTemplate, objectTemplate, new WorldPosition(spawnTemplate.getWorldId()), true);
-		Objects.requireNonNull(objectTemplate, "Npcs should be based on template");
 		controller.setOwner(this);
 		moveController = new NpcMoveController(this);
 		skillList = new NpcSkillList(this);
-		queuedSkills = new ConcurrentLinkedQueue<>();
 		setupStatContainers();
 	}
 
@@ -129,24 +128,48 @@ public class Npc extends Creature {
 		return skillList;
 	}
 
-	public ConcurrentLinkedQueue<NpcSkillEntry> getQueuedSkills() {
-		return queuedSkills;
+	public NpcSkillEntry getNextQueuedSkill() {
+		synchronized (queuedSkills) {
+			return queuedSkills.peek();
+		}
+	}
+
+	public boolean hasQueuedSkill(Predicate<NpcSkillEntry> filter) {
+		synchronized (queuedSkills) {
+			return  queuedSkills.stream().anyMatch(filter);
+		}
+	}
+
+	public void removeNextQueuedSkill(NpcSkillEntry skill) {
+		synchronized (queuedSkills) {
+			if (queuedSkills.peek() == skill) {
+				queuedSkills.poll();
+			}
+		}
 	}
 
 	public void clearQueuedSkills() {
-		queuedSkills.clear();
+		synchronized (queuedSkills) {
+			queuedSkills.clear();
+		}
+	}
+
+	public void queueSkill(NpcSkillEntry skill) {
+		synchronized (queuedSkills) {
+			queuedSkills.offer(skill);
+		}
 	}
 
 	public void queueSkill(int skillId, int level) {
-		queuedSkills.offer(new NpcSkillTemplateEntry(new QueuedNpcSkillTemplate(skillId, level)));
+		queueSkill(new NpcSkillTemplateEntry(new QueuedNpcSkillTemplate(skillId, level)));
 	}
 
 	public void queueSkill(int skillId, int level, int nextSkillTime) {
-		queuedSkills.offer(new NpcSkillTemplateEntry(new QueuedNpcSkillTemplate(skillId, level, nextSkillTime, NpcSkillTargetAttribute.MOST_HATED)));
+		queueSkill(new NpcSkillTemplateEntry(new QueuedNpcSkillTemplate(skillId, level, nextSkillTime, NpcSkillTargetAttribute.MOST_HATED)));
 	}
 
 	public void queueSkill(int skillId, int level, int nextSkillTime, NpcSkillTargetAttribute npcSkillTargetAttribute) {
-		queuedSkills.offer(new NpcSkillTemplateEntry(new QueuedNpcSkillTemplate(skillId, level, nextSkillTime, npcSkillTargetAttribute)));
+		queueSkill(new NpcSkillTemplateEntry(new QueuedNpcSkillTemplate(skillId, level, nextSkillTime, npcSkillTargetAttribute)));
 	}
 
 	public boolean isWalker() {
@@ -163,6 +186,8 @@ public class Npc extends Creature {
 
 	@Override
 	public TribeClass getTribe() {
+		if (getCreator() instanceof Player player)
+			return player.getTribe();
 		TribeClass transformTribe = isTransformed() ? getTransformModel().getTribe() : null;
 		if (transformTribe != null) {
 			return transformTribe;
@@ -280,16 +305,8 @@ public class Npc extends Creature {
 		this.creatorId = creatorId;
 	}
 
-	public int getTownId() {
-		return townId;
-	}
-
-	public void setTownId(int townId) {
-		this.townId = townId;
-	}
-
 	public VisibleObject getCreator() {
-		return null;
+		return creatorId == 0 ? null : World.getInstance().findVisibleObject(creatorId);
 	}
 
 	public void setWalkerGroup(WalkerGroup wg) {
@@ -298,14 +315,6 @@ public class Npc extends Creature {
 
 	public WalkerGroup getWalkerGroup() {
 		return walkerGroup;
-	}
-
-	public void setWalkerGroupShift(WalkerGroupShift shift) {
-		this.walkerGroupShift = shift;
-	}
-
-	public WalkerGroupShift getWalkerGroupShift() {
-		return walkerGroupShift;
 	}
 
 	@Override
